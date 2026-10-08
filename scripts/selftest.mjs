@@ -1066,6 +1066,22 @@ check(
     .length >= 3,
 )
 check(
+  '★★ 必须有**不碰 WMI** 的来源 —— 朋友那台机器上 WMI 全家族被拒（HRESULT 0x80041003）',
+  setupSrc2.includes('gpuNamesFromRegistry') && setupSrc2.includes('gpuNamesFromDxdiag'),
+)
+check(
+  '★ 注册表那条要排在 WMI 之前（WMI 被锁的机器上只有它能活）',
+  setupSrc2.indexOf("'注册表（不经过 WMI）'") < setupSrc2.indexOf("'PowerShell + CIM'"),
+)
+check(
+  '★ dxdiag 的 /t 输出必须按 UTF-16LE 读（读错就是一整片乱码）',
+  setupSrc2.includes("readFileSync(out, 'utf16le')"),
+)
+check(
+  '★ 全部失败时提示「去普通 cmd 里跑」（沙箱会连注册表一起锁掉）',
+  setupSrc2.includes('在普通 cmd 窗口里自己跑'),
+)
+check(
   '★ 每一条失败都要记下原因（不能静默吞掉 —— 原来就是吞了 `res.error`）',
   setupSrc2.includes('res.error') && setupSrc2.includes('errors.push'),
 )

@@ -177,41 +177,103 @@ function classifyVendor(joined) {
  * @returns {{names: string[], vendor: 'nvidia'|'amd'|'intel'|'unknown',
  *            via: string|null, errors: string[]}}
  */
+/* ---------- 显卡名的几条来源（含两条「完全不碰 WMI」的） ---------- */
+
+/** 显示适配器的注册表类键（微软固定 GUID）。 */
+const DISPLAY_CLASS_KEY = 'HKLM\\SYSTEM\\CurrentControlSet\\Control\\Class\\{4d36e968-e325-11ce-bfc1-08002be10318}'
+
+/**
+ * 来源 A：读注册表（**完全不经过 WMI**）。
+ *
+ * ⚠ 为什么必须有这条（朋友那台 A 卡机器实测）：
+ *   `Get-CimInstance` 报 HRESULT `0x80041003`（= WBEM_E_ACCESS_DENIED），
+ *   连 `wmic` 都是 Access denied。而 **CIM / WMI / wmic / PowerShell7 全属 WMI 家族** ——
+ *   四条兜底一起阵亡 ✗ 于是又是 unknown，又走回 NVIDIA 那条错路。
+ *   注册表这条路不碰 WMI，能绕过那类封锁 ✓（`reg.exe` 是系统自带）
+ */
+function gpuNamesFromRegistry() {
+  const res = spawnSync('reg.exe', ['query', DISPLAY_CLASS_KEY, '/s', '/v', 'DriverDesc'],
+    { encoding: 'utf8', windowsHide: true, timeout: 15000 })
+  if (res.error) throw new Error(res.error.code ?? res.error.message)
+  const text = `${res.stdout ?? ''}${res.stderr ?? ''}`
+  const names = []
+  for (const line of text.split(/\r?\n/u)) {
+    const m = /DriverDesc\s+REG_SZ\s+(.+)$/iu.exec(line.trim())
+    if (m && m[1].trim() !== '') names.push(m[1].trim())
+  }
+  if (names.length > 0) return names
+  if (res.status !== 0) {
+    const first = String(text).trim().split(/\r?\n/u)[0] ?? ''
+    throw new Error(`reg 退出码 ${res.status}${first === '' ? '' : ` —— ${first.slice(0, 120)}`}`)
+  }
+  throw new Error('注册表里没找到 DriverDesc')
+}
+
+/**
+ * 来源 B：dxdiag 输出到文件再解析（**既不碰 WMI、也不碰注册表**，最后的保险）。
+ * ⚠ 慢（几秒到十几秒），所以永远排在最后。
+ * ⚠ `dxdiag /t` 写出的是 **UTF-16LE**，必须按 utf16le 读，否则全是乱码。
+ */
+function gpuNamesFromDxdiag() {
+  const out = path.join(os.tmpdir(), `dshqp-dxdiag-${process.pid}.txt`)
+  try {
+    const res = spawnSync('dxdiag.exe', ['/t', out], { encoding: 'utf8', windowsHide: true, timeout: 120000 })
+    if (res.error) throw new Error(res.error.code ?? res.error.message)
+    if (!fs.existsSync(out)) throw new Error('dxdiag 没写出文件（可能被拦，或系统里没有）')
+    const text = fs.readFileSync(out, 'utf16le')
+    const names = []
+    for (const line of text.split(/\r?\n/u)) {
+      // 中英文系统的字段名不一样，都收
+      const m = /^\s*(?:Card name|显示卡名称|显示适配器名称)\s*[:：]\s*(.+)$/iu.exec(line)
+      if (m && m[1].trim() !== '') names.push(m[1].trim())
+    }
+    if (names.length === 0) throw new Error('dxdiag 输出里没找到显卡名')
+    return names
+  } finally {
+    try { fs.unlinkSync(out) } catch { /* 删不掉也不碍事，它在 temp 里 */ }
+  }
+}
+
+/** WMI 家族：跑一条 PowerShell / wmic 查询，拿显卡名。 */
+function wmiNames(exe, argv) {
+  const res = spawnSync(exe, argv, { encoding: 'utf8', windowsHide: true, timeout: 20000 })
+  if (res.error) throw new Error(res.error.code ?? res.error.message)
+  if (res.status !== 0) {
+    const msg = String(res.stderr ?? '').trim().split(/\r?\n/u)[0] ?? ''
+    throw new Error(`退出码 ${res.status}${msg === '' ? '' : ` —— ${msg.slice(0, 140)}`}`)
+  }
+  return String(res.stdout ?? '')
+    .split(/\r?\n/u).map((s) => s.trim())
+    .filter((s) => s !== '' && !/^name$/iu.test(s)) // wmic 会带一行表头
+}
+
 function detectGpu() {
-  const attempts = [
-    ['powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
-      'Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name'], 'PowerShell + CIM'],
-    ['powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
-      'Get-WmiObject Win32_VideoController | Select-Object -ExpandProperty Name'], 'PowerShell + WMI（老式）'],
-    ['pwsh.exe', ['-NoProfile', '-NonInteractive', '-Command',
-      'Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name'], 'PowerShell 7'],
-    ['wmic.exe', ['path', 'win32_VideoController', 'get', 'name'], 'wmic（已废弃，但很多机器还有）'],
+  const PS = (cmd) => ['-NoProfile', '-NonInteractive', '-Command', cmd]
+  const providers = [
+    // ★ 先试不碰 WMI 的那条 —— 在 WMI 被锁的机器上只有它能活
+    ['注册表（不经过 WMI）', gpuNamesFromRegistry],
+    ['PowerShell + CIM', () => wmiNames('powershell.exe',
+      PS('Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name'))],
+    ['PowerShell + WMI（老式）', () => wmiNames('powershell.exe',
+      PS('Get-WmiObject Win32_VideoController | Select-Object -ExpandProperty Name'))],
+    ['PowerShell 7', () => wmiNames('pwsh.exe',
+      PS('Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name'))],
+    ['wmic（已废弃，但很多机器还有）', () => wmiNames('wmic.exe',
+      ['path', 'win32_VideoController', 'get', 'name'])],
+    // ★ 最后的保险：连注册表都被拦时，dxdiag 是独立通道
+    ['dxdiag（不经过 WMI，也绕开注册表）', gpuNamesFromDxdiag],
   ]
   const errors = []
-  for (const [exe, argv, label] of attempts) {
-    let res
+  for (const [label, fn] of providers) {
     try {
-      res = spawnSync(exe, argv, { encoding: 'utf8', windowsHide: true, timeout: 20000 })
+      const names = fn()
+      if (names.length > 0) {
+        return { names, vendor: classifyVendor(names.join(' | ')), via: label, errors }
+      }
+      errors.push(`${label}：跑通了，但一个显卡名都没返回`)
     } catch (error) {
-      errors.push(`${label}：启动失败 —— ${error?.message ?? error}`)
-      continue
+      errors.push(`${label}：${error?.message ?? error}`)
     }
-    if (res.error) {
-      errors.push(`${label}：${res.error.code ?? res.error.message}`)
-      continue
-    }
-    if (res.status !== 0) {
-      const msg = String(res.stderr ?? '').trim().split(/\r?\n/u)[0] ?? ''
-      errors.push(`${label}：退出码 ${res.status}${msg === '' ? '' : ` —— ${msg.slice(0, 140)}`}`)
-      continue
-    }
-    const names = String(res.stdout ?? '')
-      .split(/\r?\n/u).map((s) => s.trim())
-      .filter((s) => s !== '' && !/^name$/iu.test(s)) // wmic 会带一行表头
-    if (names.length > 0) {
-      return { names, vendor: classifyVendor(names.join(' | ')), via: label, errors }
-    }
-    errors.push(`${label}：命令跑通了，但一个显卡名都没返回`)
   }
   return { names: [], vendor: 'unknown', via: null, errors }
 }
@@ -519,6 +581,10 @@ if (gpu.names.length === 0) {
   console.log('      · AMD Radeon       ：node scripts/setup.mjs --amd')
   console.log('      · 已经有 ComfyUI   ：node scripts/setup.mjs --comfy <目录>')
   console.log('    （想知道自己是什么卡：按 Win+R 输入 dxdiag，看「显示」那一页）')
+  console.log('')
+  console.log('  ⚠ 如果上面清一色是「拒绝访问 / Access denied」：那是**权限或沙箱**把 WMI 和注册表一起锁了。')
+  console.log('    请**在普通 cmd 窗口里自己跑**下面这条（别在受限的沙箱 / 工具环境里跑）：')
+  console.log('      打开解压出来的文件夹 → 在地址栏输入 cmd 回车 → 再粘贴命令')
   process.exit(1)
 }
 for (const name of gpu.names) console.log(`  · ${name}`)
