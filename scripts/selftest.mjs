@@ -1142,6 +1142,47 @@ check(
   })(),
 )
 
+section('㉔ A 卡启动参数与路径（朋友那边的 DSH 审查出来的三个缺陷）')
+
+/* 三个缺陷，一个比一个深：
+   ① 插件自启 ComfyUI 的参数**写死**成 N 卡那两条，A 卡必需的
+      `--disable-dynamic-vram` / `--use-pytorch-cross-attention` 一个都没有 ✗
+      —— 而 setup.mjs 自己还提示「参数别省」，**自相矛盾**；
+   ② 就算补上参数也没用：插件三个路径默认指 `D:\ComfyUI`，
+      而 A 卡那套装在 `~\ComfyUI-rocm`，**根本不是一处** ✗
+   ③ 所以要一份**带路径的安装标记**，让 A 卡用户零配置可用 ✓ */
+check(
+  '★ 启动参数不再写死（改由 comfyArgsFor 算）',
+  hostSrc.includes('function comfyArgsFor')
+    && !hostSrc.includes("'-ArgumentList @('-s','${mainPy.replace(/'/gu, \"''\")}','--windows-standalone-build'"),
+)
+check(
+  '★ A 卡必需的那两个参数在常量里',
+  hostSrc.includes("'--disable-dynamic-vram'") && hostSrc.includes("'--use-pytorch-cross-attention'"),
+)
+check(
+  '★★ 三个路径的优先级：显式配置 > A 卡标记 > 默认（A 卡那套和 N 卡便携包不是一处）',
+  /cfg\.comfyPython \?\? amd\?\.comfyPython/u.test(hostSrc)
+    && /cfg\.comfyMainPy \?\? amd\?\.comfyMainPy/u.test(hostSrc)
+    && /cfg\.comfyWorkdir \?\? amd\?\.comfyWorkdir/u.test(hostSrc),
+)
+check('★ 有读取安装标记的函数', hostSrc.includes('function readAmdMarker'))
+check(
+  '★ 标记放在插件自己的状态目录（和 uiStatePath 同一层），而不是工作目录',
+  hostSrc.includes('function amdMarkerPath') && /dirname\(uiStatePath\(\)\)/u.test(hostSrc),
+)
+check('有 comfyArgs 配置项（默认空 = 用内置默认）', /comfyArgs: \[\],/u.test(hostSrc))
+check(
+  '★ setup.mjs 装完 A 卡要写下这份标记，并且带上那三个路径',
+  setupSrc2.includes('qwen-paint-amd.marker')
+    && setupSrc2.includes('comfyWorkdir: targetRoot')
+    && setupSrc2.includes('comfyPython: pyExe'),
+)
+check(
+  '★ 两边认的是同一个目录（都按 DSH_HOME 优先）',
+  setupSrc2.includes('process.env.DSH_HOME') && hostSrc.includes('process.env.DSH_HOME'),
+)
+
 /* ------------------------------------------------------------------ 收尾 ---- */
 
 server.close()

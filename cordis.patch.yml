@@ -7,6 +7,16 @@
 #   comfyUrl      ComfyUI 服务地址（默认本机 8188）
 #   outputDir     出图落盘目录（默认桌面「千问1生图」，遵循工作区约定）
 #   workflowFile  自定义 workflow JSON 的路径；留空则用内置的千问文生图模板
+#   comfyArgs     插件**自动拉起** ComfyUI 时用的启动参数（数组）
+#                 ⚠ A 卡用户**通常不用填**：装的时候 setup.mjs 会留下一份安装标记，
+#                   插件读到就自动补上 --disable-dynamic-vram --use-pytorch-cross-attention ✓
+#                 想完全自己接管就填，会**原样替换**默认那两条：
+#                   comfyArgs: ['--disable-auto-launch', '--disable-dynamic-vram']
+#   comfyPython / comfyMainPy / comfyWorkdir
+#                 指定「ComfyUI 装在哪」。同样**通常不用填** ——
+#                 A 卡那套装在 ~\ComfyUI-rocm（和 N 卡便携包的 D:\ComfyUI 不是一处），
+#                 插件会从安装标记里读出来，零配置可用 ✓
+#   idleShutdownMs 空闲多久自动关停后端（毫秒）；**填 0 = 永不关**（想让它常驻就填 0）
 - insert:
     - id: qwen-paint
       name: 'dsh-qwen-paint'

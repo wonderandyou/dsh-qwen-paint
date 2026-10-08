@@ -550,8 +550,36 @@ async function amdSetup(targetRoot, gfx, checkOnly) {
   }
 
   console.log('\n  ✓ A 卡这套装完了')
-  console.log(`    以后启动：${pyExe} ${path.join(comfyDir, 'main.py')} --disable-dynamic-vram --use-pytorch-cross-attention`)
-  console.log('    ⚠ 启动参数别省：--disable-dynamic-vram 在 A 卡上是必须的（DynamicVRAM 有已知问题）')
+
+  // ★★ 写安装标记。插件靠它做到两件事，用户都不用记：
+  //   ① 知道这是 A 卡那套 → **自动补上** --disable-dynamic-vram --use-pytorch-cross-attention
+  //      （以前插件把启动参数写死成 N 卡那两条、一个 A 卡必需的都没有 ✗
+  //        而本脚本自己却在提示"参数别省" —— 让用户手动加、插件自己偷懒，自相矛盾）
+  //   ② 知道这套 ComfyUI 在**哪** → A 卡装的是 ~\ComfyUI-rocm，和 N 卡便携包 D:\ComfyUI
+  //      不是同一处，而插件那三个路径默认全指向后者 ✗ 有标记才能零配置可用 ✓
+  //   ⚠ 目录必须和插件的 uiStatePath() 完全一致：$DSH_HOME 优先。
+  try {
+    const home = process.env.DSH_HOME
+      ?? path.join(process.env.USERPROFILE ?? process.env.HOME ?? '.', '.dsh')
+    fs.mkdirSync(home, { recursive: true })
+    const marker = path.join(home, 'qwen-paint-amd.marker')
+    fs.writeFileSync(marker, JSON.stringify({
+      installedAt: new Date().toISOString(),
+      note: 'A 卡（ROCm）安装标记：插件据此自动补启动参数，并使用下面这三个路径',
+      comfyWorkdir: targetRoot,
+      comfyMainPy: path.join(comfyDir, 'main.py'),
+      comfyPython: pyExe,
+      comfyArgs: ['--disable-dynamic-vram', '--use-pytorch-cross-attention'],
+    }, null, 2), 'utf8')
+    console.log(`  ✓ 已写安装标记：${marker}`)
+    console.log('    插件以后会**自动**带上那两个启动参数、也用这套路径 —— 不用你手改配置')
+  } catch (error) {
+    console.log(`  ⚠ 安装标记没写成（${error?.message ?? error}）`)
+    console.log('    插件会退回默认参数。请手动在配置里加：')
+    console.log('      comfyArgs: ["--disable-auto-launch","--disable-dynamic-vram","--use-pytorch-cross-attention"]')
+  }
+
+  console.log(`\n    以后手动启动：${pyExe} ${path.join(comfyDir, 'main.py')} --disable-dynamic-vram --use-pytorch-cross-attention`)
   console.log('    ⚠ 出第一张图后**务必人工看一眼**是不是正常图（A 卡会静默出错）')
   return { dir: comfyDir }
 }
