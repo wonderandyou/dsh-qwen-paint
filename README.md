@@ -3,6 +3,8 @@
 让 **DeepSeek Harness** 在对话里直接调用**本机 ComfyUI**、用**千问 Qwen-Image 2.1** 画图。
 在聊天框说一句「画一只在雪地里的柴犬」，图就出来了 —— 全程 **127.0.0.1，不出网、不花钱、不需要任何 API Key**。
 
+> **作者：@奇迹与你**　｜　MIT 许可　｜　仓库：<https://github.com/wonderandyou/dsh-qwen-paint>
+
 ---
 
 ## 它是什么
@@ -212,12 +214,34 @@ node scripts/selftest.mjs
   推迟到服务就绪之后，某个服务在老宿主里不存在时插件会**永远不 apply 且不报错**。
 - **workflow 照抄主人机器上已验证的那份**（`D:\ComfyUI\小鲸鱼生图\app.py` 的
   `build_workflow`），节点与连线一个字不改。
-- **不自动拉起 ComfyUI**：启动它要占显存、要等模型加载，属于重操作，交给主人决定。
-- **空闲关停只在插件出过图之后计时**：`lastActivityAt` 初始为 `null`，所以绝不会误关
-  你自己打开的、正在「小鲸鱼生图」里用的 ComfyUI。到点还要确认它在线、`/queue` 为空，
-  并且**只杀命令行确实像 ComfyUI 的进程**——宁可留着占显存，也不误杀别人的进程。
+- **启动预热**：插件加载时后台探一次后端，不在线就**隐藏窗口拉起**
+  （不 await、不阻塞 DSH 启动）；出图时还有一次兜底，所以预热失败也不影响出图。
+- **空闲关停的计时起点有两个**：预热确认后端在线时、以及你在界面里改档位时。
+  （⚠ 早先只有"出图成功"才算起点，结果**重启 DSH 后一次图都没画就永远不关** —— 已修。）
+  到点还要确认它在线、`/queue` 为空（**有任务就续期，绝不打断**），
+  并且**只杀命令行确实像 ComfyUI 的进程** —— 宁可留着占显存，也不误杀别人的进程。
 - **状态端点只放行本机、只回事实**：`{ok, online, busy, idleShutdownInMs, url}`，
   不含任何本地路径或模型名（自测里有专门一条断言守着这条）。
 - **客户端状态指示器用 React 座位 + 纯 DOM**（照 `dsh-reasoning-glow` 的做法）：
   React 只渲染一个 `<span>` 座位，圆点与文字都在 `useEffect` 里用原生 DOM 挂，
   并且注册前检查 `React.useRef`/`useEffect` 存在 —— 种子被裁剪过就安静跳过，绝不抛。
+
+## 许可
+
+**MIT** —— 见 [LICENSE](LICENSE)。你可以自由使用、修改、再分发（包括商用），
+**只需保留版权声明与许可声明**。
+
+## 致谢与来源
+
+- **15 种流光的配色抄自「月匠」** —— 原样照搬、一个色标没改，仅作致敬与复用，
+  相关权利归原作者；原作者若有异议，联系即删。
+- **模型权重**来自 **Comfy Org 官方在 ModelScope 的仓库**
+  （<https://modelscope.cn/models/Comfy-Org/Qwen-Image-2.1>）。
+  本仓库**只记录官方 SHA256**，**不转存、不镜像**任何权重文件。
+- **ComfyUI** 是 [comfyanonymous/ComfyUI](https://github.com/comfyanonymous/ComfyUI) 的作品，
+  本插件只是通过它的 HTTP API 下任务。
+
+## 作者
+
+**@奇迹与你**　｜　<https://github.com/wonderandyou/dsh-qwen-paint>
+
