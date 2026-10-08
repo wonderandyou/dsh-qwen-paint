@@ -906,7 +906,12 @@ const setupCode = await fsp.readFile(path.join(ROOT, 'scripts', 'setup.mjs'), 'u
 check('setup.mjs 里有显卡检测', setupCode.includes('function detectGpu()'))
 check(
   '★ 判定顺序是「有 N 卡就走 N 卡」（多显卡机器上别被 AMD 核显带偏 —— 本机实测就报了三张卡）',
-  setupCode.indexOf("vendor = 'nvidia'") < setupCode.indexOf("vendor = 'amd'"),
+  (() => {
+    const fn = setupCode.slice(setupCode.indexOf('function classifyVendor'))
+    const nv = fn.indexOf("return 'nvidia'")
+    const amd = fn.indexOf("return 'amd'")
+    return nv >= 0 && amd >= 0 && nv < amd
+  })(),
 )
 check('有 gfx 型号映射表', setupCode.includes('GFX_TABLE') && setupCode.includes('function gfxOf'))
 check(
@@ -1046,6 +1051,42 @@ check(
   hostSrc.includes('看不到用户消息'),
 )
 check('★ 图生图也被点名进生图意图（用这张图做参考画…）', hostSrc.includes('用这张图做参考画'))
+
+section('㉒ 显卡检测的可靠性（朋友那台 A 卡机器实测暴露的两个 bug）')
+
+/* 事故经过：朋友的 A 卡机器跑 `--check`，输出「查不到显卡信息」→ 判定 unknown
+   → 兜底走了 NVIDIA 路线 → 被送去下 CUDA 便携包，装完根本跑不起来 ✗
+   两个 bug：
+     ① 只试**一条**查询路径，失败还**静默吞掉**（没检查 `res.error`）；
+     ② 认不出就**默认 NVIDIA** —— 对 A 卡用户是灾难，正是主人一开始就要避免的那件事。 */
+const setupSrc2 = readFileSync(path.join(ROOT, 'scripts', 'setup.mjs'), 'utf8')
+check(
+  '★ 显卡查询有多条兜底路径（原来只有一条，失败就什么都不知道）',
+  (setupSrc2.match(/Get-CimInstance Win32_VideoController|Get-WmiObject Win32_VideoController|wmic\.exe/gu) ?? [])
+    .length >= 3,
+)
+check(
+  '★ 每一条失败都要记下原因（不能静默吞掉 —— 原来就是吞了 `res.error`）',
+  setupSrc2.includes('res.error') && setupSrc2.includes('errors.push'),
+)
+check(
+  '★★ 认不出厂商时**绝不默认 NVIDIA**（会把 A 卡用户送去下 CUDA 包）',
+  !setupSrc2.includes('按 NVIDIA 那条路试'),
+)
+check(
+  '★ 认不出时给出可照做的二选一（--nvidia / --amd）',
+  setupSrc2.includes('node scripts/setup.mjs --nvidia')
+    && setupSrc2.includes('node scripts/setup.mjs --amd'),
+)
+check(
+  '★ 厂商仍认不出来就退出，不硬着头皮走',
+  /gpu\.vendor === 'unknown'[\s\S]{0,400}?process\.exit/u.test(setupSrc2),
+)
+check(
+  '有 --amd / --nvidia 手动指定（认不出时的出口）',
+  setupSrc2.includes("has('--amd')") && setupSrc2.includes("has('--nvidia')"),
+)
+check('★ 查不到时提示怎么自查显卡（dxdiag）', setupSrc2.includes('dxdiag'))
 
 /* ------------------------------------------------------------------ 收尾 ---- */
 

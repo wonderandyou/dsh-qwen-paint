@@ -115,7 +115,9 @@ const ROCM_TORCHVISION = '0.24.1+rocm7.2.1'
 const ROCM_TORCHAUDIO = '2.9.1+rocm7.2.1'
 
 /** `--force-amd`：本机是 N 卡，靠它把 A 卡分支整条走一遍做验证。 */
-const FORCE_AMD = has('--force-amd')
+/** `--amd` / `--nvidia`：显卡认不出来时由用户指定走哪条路（也用于本机测试）。 */
+const FORCE_AMD = has('--amd') || has('--force-amd')
+const FORCE_NVIDIA = has('--nvidia')
 /** `--yes`：跳过"A 卡这套操作比较重"的二次确认（给别人做一键安装时用）。 */
 const ASSUME_YES = has('--yes')
 
@@ -150,28 +152,68 @@ const GFX_TABLE = [
   [/RX\s*5500|PRO\s*W5500/iu, 'gfx1012', 'no'],
 ]
 
+/** 从显卡名判定厂商。 */
+function classifyVendor(joined) {
+  if (/NVIDIA|GeForce|RTX\s*\d|GTX\s*\d|Quadro/iu.test(joined)) return 'nvidia'
+  if (/AMD|Radeon|RX\s*\d|Vega/iu.test(joined)) return 'amd'
+  if (/Intel/iu.test(joined)) return 'intel'
+  return 'unknown'
+}
+
 /**
  * 查本机显卡。
- * @returns {{names: string[], vendor: 'nvidia'|'amd'|'intel'|'unknown'}}
  *
- * ⚠ 优先级是**故意的**：只要有 N 卡就走 N 卡那条路 —— 那条路最成熟、也是实测过的。
- *   游戏本经常"核显 + 独显"同时报出来，别被那颗 AMD 核显带到 ROCm 上去。
+ * ★★ 2026-10-08 修（朋友那台 A 卡机器实测暴露出来的）：
+ *   原来**只有一条**查询路径（`powershell.exe` + `Get-CimInstance`），而且
+ *   **失败时被静默吞掉**（我没检查 `res.error`）—— 拉不起 PowerShell、或者那台机器
+ *   WMI/CIM 有问题，都会变成轻飘飘一句"查不到显卡信息"，**原因一个字都不说** ✗。
+ *
+ *   后果很严重：A 卡机器被判成 unknown → 兜底走了 NVIDIA 路线 →
+ *   用户被送去下 CUDA 便携包，**装完根本跑不起来** ✗✗
+ *   （这正是主人一开始就要避免的情况：「用户只能安装适合自己的后端」。）
+ *
+ *   ✓ 现在：**四条路依次试**，每条失败的**具体原因**都记下来带回给用户看。
+ *
+ * @returns {{names: string[], vendor: 'nvidia'|'amd'|'intel'|'unknown',
+ *            via: string|null, errors: string[]}}
  */
 function detectGpu() {
-  let names = []
-  try {
-    const res = spawnSync('powershell.exe', [
-      '-NoProfile', '-NonInteractive', '-Command',
-      'Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name',
-    ], { encoding: 'utf8' })
-    names = String(res.stdout ?? '').split(/\r?\n/u).map((s) => s.trim()).filter((s) => s !== '')
-  } catch (error) { /* 查不到就当未知，不拦路 */ }
-  const joined = names.join(' | ')
-  let vendor = 'unknown'
-  if (/NVIDIA|GeForce|RTX\s*\d|GTX\s*\d|Quadro/iu.test(joined)) vendor = 'nvidia'
-  else if (/AMD|Radeon|RX\s*\d|Vega/iu.test(joined)) vendor = 'amd'
-  else if (/Intel/iu.test(joined)) vendor = 'intel'
-  return { names, vendor }
+  const attempts = [
+    ['powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
+      'Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name'], 'PowerShell + CIM'],
+    ['powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
+      'Get-WmiObject Win32_VideoController | Select-Object -ExpandProperty Name'], 'PowerShell + WMI（老式）'],
+    ['pwsh.exe', ['-NoProfile', '-NonInteractive', '-Command',
+      'Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name'], 'PowerShell 7'],
+    ['wmic.exe', ['path', 'win32_VideoController', 'get', 'name'], 'wmic（已废弃，但很多机器还有）'],
+  ]
+  const errors = []
+  for (const [exe, argv, label] of attempts) {
+    let res
+    try {
+      res = spawnSync(exe, argv, { encoding: 'utf8', windowsHide: true, timeout: 20000 })
+    } catch (error) {
+      errors.push(`${label}：启动失败 —— ${error?.message ?? error}`)
+      continue
+    }
+    if (res.error) {
+      errors.push(`${label}：${res.error.code ?? res.error.message}`)
+      continue
+    }
+    if (res.status !== 0) {
+      const msg = String(res.stderr ?? '').trim().split(/\r?\n/u)[0] ?? ''
+      errors.push(`${label}：退出码 ${res.status}${msg === '' ? '' : ` —— ${msg.slice(0, 140)}`}`)
+      continue
+    }
+    const names = String(res.stdout ?? '')
+      .split(/\r?\n/u).map((s) => s.trim())
+      .filter((s) => s !== '' && !/^name$/iu.test(s)) // wmic 会带一行表头
+    if (names.length > 0) {
+      return { names, vendor: classifyVendor(names.join(' | ')), via: label, errors }
+    }
+    errors.push(`${label}：命令跑通了，但一个显卡名都没返回`)
+  }
+  return { names: [], vendor: 'unknown', via: null, errors }
 }
 
 /**
@@ -460,20 +502,43 @@ console.log('='.repeat(64))
 /* ⓪ 显卡检测 —— 决定走哪条路（0.1.1 新增） */
 console.log('\n⓪ 看显卡 …')
 const gpu = FORCE_AMD
-  ? { names: ['（--force-amd：强制模拟 AMD 显卡）'], vendor: 'amd' }
-  : detectGpu()
+  ? { names: ['（--amd：手动指定走 AMD 路线）'], vendor: 'amd', via: '--amd', errors: [] }
+  : FORCE_NVIDIA
+    ? { names: ['（--nvidia：手动指定走 NVIDIA 路线）'], vendor: 'nvidia', via: '--nvidia', errors: [] }
+    : detectGpu()
+
 if (gpu.names.length === 0) {
-  console.log('  · 查不到显卡信息（不影响：也可以用 --comfy <目录> 手动指定）')
-} else {
-  for (const name of gpu.names) console.log(`  · ${name}`)
+  // ★★ 2026-10-08 修（朋友那台 A 卡机器暴露）：这里原来会"兜底按 NVIDIA 试" ——
+  //   对 A 卡用户是灾难：他会被送去下 CUDA 便携包，装完根本跑不起来 ✗
+  //   ✓ 现在**绝不替他猜**：把每条查询路径的失败原因摆出来，让他自己指定。
+  console.log('  ✗ 查不到显卡信息。下面几条查询路径都试过了：')
+  for (const line of gpu.errors) console.log(`      · ${line}`)
+  console.log('')
+  console.log('  ⚠ 不替你猜走哪条路 —— 猜错要白下好几个 GB：')
+  console.log('      · N 卡（或不确定） ：node scripts/setup.mjs --nvidia')
+  console.log('      · AMD Radeon       ：node scripts/setup.mjs --amd')
+  console.log('      · 已经有 ComfyUI   ：node scripts/setup.mjs --comfy <目录>')
+  console.log('    （想知道自己是什么卡：按 Win+R 输入 dxdiag，看「显示」那一页）')
+  process.exit(1)
 }
+for (const name of gpu.names) console.log(`  · ${name}`)
+if (gpu.via !== null && gpu.via !== undefined && !gpu.via.startsWith('--')) {
+  console.log(`  （查到的途径：${gpu.via}）`)
+}
+
 const VENDOR_LABEL = {
   nvidia: 'NVIDIA → 走 ComfyUI 官方便携包（CUDA）',
   amd: 'AMD → 走 ROCm 路线（下面单独说明）',
-  intel: 'Intel 核显 → 基本跑不动，建议换台机器；或加 --force-amd 看 A 卡那条路的说明',
-  unknown: '认不出厂商 → 按 NVIDIA 那条路试（最通用）',
+  intel: 'Intel 核显 → 基本跑不动，建议换台机器',
+  unknown: '⚠ 认出了显卡名字，但认不出是哪家',
 }
 console.log(`  判定：${VENDOR_LABEL[gpu.vendor]}`)
+
+if (gpu.vendor === 'unknown') {
+  console.log('\n  ✗ 厂商认不出来，我不敢替你选（选错要白下几个 GB）。')
+  console.log('    确认之后加个参数重跑：--nvidia 或 --amd')
+  process.exit(1)
+}
 
 /* ① ComfyUI */
 let comfyDir = null
