@@ -24,8 +24,15 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const PKG = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'))
 const DIST = path.join(ROOT, 'dist')
 const STAGE = path.join(DIST, 'pkg')
-// ⚠ meta.title 本身已经带括号（「(绘图)千问」），这里不要再套一层
-const ZIP_NAME = `${PKG.meta?.title ?? PKG.name}-${PKG.version}-src.zip`
+/**
+ * 包名后缀：**默认不加 `-src`** —— 主人 2026-10-08 定的规矩：
+ * 「以后我没有明确表明要发源码就不加 -src」。
+ * 确实要发源码包时才显式加参数：`node scripts/pack.mjs --src`
+ *
+ * ⚠ meta.title 本身已经带括号（「(绘图)千问」），这里不要再套一层。
+ */
+const WANT_SRC = process.argv.includes('--src')
+const ZIP_NAME = `${PKG.meta?.title ?? PKG.name}-${PKG.version}${WANT_SRC ? '-src' : ''}.zip`
 const ZIP = path.join(DIST, ZIP_NAME)
 
 /** 顶层必须进包的文件（少一个就报错，防止"少打包了文档"这种低级事故）。 */
