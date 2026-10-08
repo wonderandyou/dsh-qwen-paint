@@ -113,12 +113,8 @@ winget install --id=Python.Python.3.12 -e
 
 （装运行时属于动系统，脚本**不替你装**，只提示。）
 
-> **本插件只用 ComfyUI 一种后端。**
-> 另有一个思路完全不同的实现 ——
-> [nihui/qwenimage-ncnn-vulkan](https://github.com/nihui/qwenimage-ncnn-vulkan)
-> （单文件 exe、零依赖、任何 Vulkan 显卡都能跑、不需要 ROCm/CUDA/Python）。
-> 但它**不是 ComfyUI**，本插件不支持它，所以这里不展开；
-> 提一句只是因为：万一 ROCm 那条在你的卡上跑不出正常图，你知道还有这么个东西可以自己去试。
+> **本插件只用 ComfyUI 一种后端**（N 卡走官方便携包，A 卡走 ROCm），
+> 不使用、也不需要任何第三方推理后端。
 
 ### 下载渠道（只走有正规资质的渠道）
 

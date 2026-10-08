@@ -325,8 +325,6 @@ async function amdSetup(targetRoot, gfx, checkOnly) {
     console.log('    AMD 官方列表里它标的是 ❌（Runtime ❌、HIP SDK ❌），硬装大概率跑不起来。')
     console.log('    可选的路：')
     console.log('      · 换一张官方支持的卡（RX 7000 / 9000 系，或 Ryzen AI Max 系列）')
-    console.log('      · 或去试 ncnn + Vulkan（纯 Vulkan、完全不需要 ROCm）：')
-    console.log('        https://github.com/nihui/qwenimage-ncnn-vulkan')
     return null
   }
 
