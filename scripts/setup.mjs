@@ -94,6 +94,86 @@ function which(exe) {
   return res.status === 0 ? String(res.stdout).split(/\r?\n/u)[0].trim() : null
 }
 
+/* ══════════════════════════════ 显卡检测（0.1.1 新增）══════════════════════════
+ *
+ * 为什么必须分两条路：
+ *   · ComfyUI 的 Windows 便携包是 **CUDA 版**，A 卡用户装上根本跑不起来 ✗
+ *   · A 卡在 Windows 上要走 **ROCm**（AMD 官方 ROCm 7.2.1 起原生支持 Windows，不用 WSL）✓
+ *   · 两条路**模型完全一样**（都用 Comfy-Org 官方那套 int8，哈希也一模一样）✓
+ *     —— 这点很关键：换显卡不用换模型，插件本身也不用改 ✓
+ *
+ * ⚠⚠ 诚实声明：**A 卡那条路本脚本作者无法实测**（开发机是 N 卡，也不会在主人机器上装）。
+ *    所以 A 卡的命令**全部照 AMD 官方博客来**，一个字没自己编：
+ *    https://rocm.blogs.amd.com/artificial-intelligence/comfyui-windows/README.html
+ *    下载源只用 **AMD 官方软件仓库 repo.radeon.com**（不是任何第三方加速站）✓
+ */
+
+/** AMD 官方 Windows ROCm wheels（AMD 官方 CDN）。 */
+const ROCM_WHEELS = 'https://repo.radeon.com/rocm/windows/rocm-rel-7.2.1/'
+const ROCM_TORCH = '2.9.1+rocm7.2.1'
+const ROCM_TORCHVISION = '0.24.1+rocm7.2.1'
+const ROCM_TORCHAUDIO = '2.9.1+rocm7.2.1'
+
+/** `--force-amd`：本机是 N 卡，靠它把 A 卡分支整条走一遍做验证。 */
+const FORCE_AMD = has('--force-amd')
+/** `--yes`：跳过"A 卡这套操作比较重"的二次确认（给别人做一键安装时用）。 */
+const ASSUME_YES = has('--yes')
+
+/**
+ * 显卡型号 → ROCm 的 gfx 代号。
+ * 只用于**猜**，猜不出就让用户照 ROCm 官方支持列表自己挑 —— 猜错比猜不出更糟，
+ * 所以这里只收常见型号，宁缺勿滥。
+ */
+const GFX_TABLE = [
+  [/RX\s*9070|AI\s*PRO\s*R9700|R9600D/iu, 'gfx1201'],
+  [/RX\s*9060/iu, 'gfx1200'],
+  [/Ryzen\s*AI\s*9\s*HX\s*375/iu, 'gfx1150'],
+  [/RX\s*79[05]0|PRO\s*W79[05]0|W7800/iu, 'gfx1100'],
+  [/RX\s*78[05]0|RX\s*77[05]0|PRO\s*V710|W7700/iu, 'gfx1101'],
+  [/RX\s*7600/iu, 'gfx1102'],
+  [/Radeon\s*780M/iu, 'gfx1103'],
+  [/RX\s*69[05]0|RX\s*6800|PRO\s*W6800|V620/iu, 'gfx1030'],
+  [/RX\s*67[05]0/iu, 'gfx1031'],
+  [/RX\s*6600|PRO\s*W6600/iu, 'gfx1032'],
+  [/RX\s*5700/iu, 'gfx1010'],
+  [/RX\s*5500|PRO\s*W5500/iu, 'gfx1012'],
+]
+
+/**
+ * 查本机显卡。
+ * @returns {{names: string[], vendor: 'nvidia'|'amd'|'intel'|'unknown'}}
+ *
+ * ⚠ 优先级是**故意的**：只要有 N 卡就走 N 卡那条路 —— 那条路最成熟、也是实测过的。
+ *   游戏本经常"核显 + 独显"同时报出来，别被那颗 AMD 核显带到 ROCm 上去。
+ */
+function detectGpu() {
+  let names = []
+  try {
+    const res = spawnSync('powershell.exe', [
+      '-NoProfile', '-NonInteractive', '-Command',
+      'Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name',
+    ], { encoding: 'utf8' })
+    names = String(res.stdout ?? '').split(/\r?\n/u).map((s) => s.trim()).filter((s) => s !== '')
+  } catch (error) { /* 查不到就当未知，不拦路 */ }
+  const joined = names.join(' | ')
+  let vendor = 'unknown'
+  if (/NVIDIA|GeForce|RTX\s*\d|GTX\s*\d|Quadro/iu.test(joined)) vendor = 'nvidia'
+  else if (/AMD|Radeon|RX\s*\d|Vega/iu.test(joined)) vendor = 'amd'
+  else if (/Intel/iu.test(joined)) vendor = 'intel'
+  return { names, vendor }
+}
+
+/** 从显卡名猜 gfx 代号；猜不出返回 null。 */
+function gfxOf(names) {
+  for (const name of names) {
+    for (const [re, gfx] of GFX_TABLE) {
+      if (re.test(name)) return gfx
+    }
+  }
+  return null
+}
+
+
 /** 流式算 SHA256（大文件不能一次读进内存）。 */
 function sha256Of(file) {
   return new Promise((resolve, reject) => {
@@ -189,16 +269,208 @@ function downloadWithCurl(url, dest) {
   })
 }
 
+/* ══════════════════════════════ A 卡（AMD）那条路 ══════════════════════════════ */
+
+/** 跑一条命令、把输出直接透传给用户；失败返回 false。 */
+function run(label, exe, argv, cwd) {
+  console.log(`\n    $ ${label}`)
+  const res = spawnSync(exe, argv, { stdio: 'inherit', cwd, shell: false })
+  if (res.status !== 0) {
+    console.error(`    ✗ 失败（退出码 ${res.status}）—— 修好再重跑本脚本即可，前面的步骤会跳过`)
+    return false
+  }
+  console.log('    ✓ 完成')
+  return true
+}
+
+/**
+ * A 卡一键部署。**每一条命令都来自 AMD 官方博客**
+ * （https://rocm.blogs.amd.com/artificial-intelligence/comfyui-windows/README.html），
+ * 下载源只有 AMD 官方仓库 `repo.radeon.com` + ComfyUI 官方 GitHub + Comfy-Org 官方模型。
+ *
+ * ⚠ 这套操作很重：ROCm 版 PyTorch 约 3 GB、模型 13 GB；而且是装在**别人的机器**上，
+ *   所以默认要确认一次，`--check` 则只打印计划、绝不执行。
+ *
+ * @returns {Promise<{dir: string}|null>} 装好的 ComfyUI 目录；用户放弃返回 null
+ */
+async function amdSetup(targetRoot, gfx, checkOnly) {
+  console.log('\n① A 卡（AMD Radeon）路线 …')
+
+  // ── 先说三条硬风险（比步骤重要，放最前面）──
+  console.log('  ⚠⚠ 动手前必须先知道这三条：')
+  console.log('     1. **可能静默出错** —— 在 gfx1100 这类卡上，它跑得飞快、日志也不报错，')
+  console.log('        出来的却可能是噪点 / 全黑 / 颜色错。装完**一定要人工看图**，')
+  console.log('        不能只看"跑完了"。这是 A 卡最坑的地方，没有之一。')
+  console.log('     2. **别升到 ROCm 10.0 那套 wheels** —— 它报 HIP 7.15，实测会破坏权重；')
+  console.log(`        本脚本锁死在 ${ROCM_TORCH}（HIP 7.2）。`)
+  console.log('     3. 模型是 **Qwen Research License**：仅限研究 / 评估，**禁止商用**。')
+
+  // ── Python 3.12（AMD 的 Windows wheels 只有 cp312，3.13 装不上）──
+  const py = spawnSync('py', ['-3.12', '--version'], { encoding: 'utf8' })
+  const pyOk = py.status === 0
+  const pyText = String(py.stdout ?? py.stderr ?? '').trim()
+
+  console.log('\n  ── 计划 ──')
+  console.log(`    Python 3.12：${pyOk ? `✓ ${pyText}` : '✗ 没找到（AMD 的 wheels 只支持 3.12，3.13 装不上）'}`)
+  if (!pyOk) {
+    console.log('      请先装：winget install --id=Python.Python.3.12 -e')
+    console.log('      （装完重跑本脚本。这一步脚本**不替你做** —— 装运行时要动系统，交给你决定）')
+  }
+  console.log(`    gfx 代号  ：${gfx ?? '⚠ 认不出来，请照 ROCm 官方支持列表自己挑一个'}`)
+  console.log(`      列表：https://rocm.docs.amd.com/projects/install-on-linux/en/latest/reference/gpu-specs.html`)
+  console.log(`    安装目录  ：${targetRoot}`)
+  console.log(`    下载源    ：${ROCM_WHEELS}`)
+  console.log('                （AMD 官方软件仓库；ComfyUI 用官方 GitHub，模型用 Comfy-Org 官方仓库）')
+  console.log('    ── 步骤 ──')
+  console.log(`      1. py -3.12 -m venv ${path.join(targetRoot, 'venv')}`)
+  console.log(`      2. pip install -f ${ROCM_WHEELS} "torch==${ROCM_TORCH}"`)
+  console.log(`         "torchvision==${ROCM_TORCHVISION}" "torchaudio==${ROCM_TORCHAUDIO}" numpy pillow`)
+  console.log('      3. 验证 torch 认到 A 卡（torch.cuda.is_available() 必须 True）')
+  console.log('      4. git clone ComfyUI 官方源码')
+  console.log('      5. ★ 用 constraints 锁住 torch 再装依赖')
+  console.log('         —— 这步最容易翻车：ComfyUI 的 requirements.txt 会把 ROCm 版 torch')
+  console.log('            **偷偷换成 CUDA 版**，换完就再也认不到 A 卡了 ✗')
+  console.log(`      6. 启动：python main.py --disable-dynamic-vram --use-pytorch-cross-attention`)
+
+  if (checkOnly) {
+    console.log('\n  （--check）只打印，没有执行任何一步。去掉 --check 才会真装。')
+    return null
+  }
+  if (!pyOk) {
+    console.log('\n  ⚠ Python 3.12 没就绪，先装上再重跑本脚本。')
+    return null
+  }
+
+  // ── 二次确认：这套操作很重，而且是在别人的机器上 ──
+  if (!ASSUME_YES) {
+    if (!process.stdin.isTTY) {
+      console.log('\n  （非交互环境，没得到确认 → 不执行。确认请加 --yes）')
+      return null
+    }
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
+    const ans = await rl.question('\n  要在这台机器上装 A 卡那套吗？（会下载约 3 GB，还要建 venv）(y/N) ')
+    rl.close()
+    if (!ans.trim().toLowerCase().startsWith('y')) {
+      console.log('  已取消。想只看看计划就加 --check。')
+      return null
+    }
+  }
+
+  const venv = path.join(targetRoot, 'venv')
+  const comfyDir = path.join(targetRoot, 'ComfyUI')
+  const pyExe = path.join(venv, 'Scripts', 'python.exe')
+  fs.mkdirSync(targetRoot, { recursive: true })
+
+  // 1) venv
+  if (!fs.existsSync(pyExe)) {
+    if (!run(`py -3.12 -m venv ${venv}`, 'py', ['-3.12', '-m', 'venv', venv])) return null
+  } else {
+    console.log(`\n    · venv 已存在，跳过：${venv}`)
+  }
+  if (!run('python -m pip install --upgrade pip wheel', pyExe, ['-m', 'pip', 'install', '--upgrade', 'pip', 'wheel'])) return null
+
+  // 2) ROCm 版 PyTorch（AMD 官方源）
+  if (!run(
+    `pip install -f ${ROCM_WHEELS} torch==${ROCM_TORCH} …`,
+    pyExe,
+    ['-m', 'pip', 'install', '-f', ROCM_WHEELS,
+      `torch==${ROCM_TORCH}`, `torchvision==${ROCM_TORCHVISION}`, `torchaudio==${ROCM_TORCHAUDIO}`,
+      'numpy', 'pillow'],
+  )) return null
+
+  // 3) 验证认卡
+  console.log('\n    验证 torch 能不能认到 A 卡 …')
+  const probe = spawnSync(pyExe, ['-c',
+    'import torch;print(torch.__version__);print(torch.cuda.is_available());'
+    + 'print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else "-")'],
+  { encoding: 'utf8' })
+  const probeText = `${probe.stdout ?? ''}${probe.stderr ?? ''}`.trim()
+  console.log(probeText.split(/\r?\n/u).map((l) => `      ${l}`).join('\n'))
+  if (!/True/u.test(probeText)) {
+    console.error('\n    ✗ torch.cuda.is_available() 不是 True —— A 卡没被认到。')
+    console.error('      先查显卡驱动（AMD 官方要求 Adrenalin 较新版本），再重跑。')
+    return null
+  }
+  console.log('    ✓ 认到卡了')
+
+  // 4) ComfyUI 官方源码
+  if (!fs.existsSync(path.join(comfyDir, 'main.py'))) {
+    if (!run(`git clone ${COMFY_REPO}`, 'git', ['clone', '--depth', '1', COMFY_REPO, comfyDir])) return null
+  } else {
+    console.log(`\n    · ComfyUI 源码已存在，跳过：${comfyDir}`)
+  }
+
+  // 5) ★ constraints 锁 torch —— 这一步不做，前面全白干
+  const reqPath = path.join(comfyDir, 'requirements.txt')
+  if (fs.existsSync(reqPath)) {
+    const reqText = fs.readFileSync(reqPath, 'utf8')
+    const kept = reqText.split(/\r?\n/u)
+      .filter((line) => !/^\s*(torch|torchvision|torchaudio)\b/u.test(line))
+      .join('\n')
+    const pinPath = path.join(targetRoot, 'torch-pin.txt')
+    const reqNoTorch = path.join(targetRoot, 'requirements-no-torch.txt')
+    fs.writeFileSync(pinPath,
+      `torch==${ROCM_TORCH}\ntorchvision==${ROCM_TORCHVISION}\ntorchaudio==${ROCM_TORCHAUDIO}\n`, 'utf8')
+    fs.writeFileSync(reqNoTorch, kept, 'utf8')
+    console.log(`\n    ★ 已把 requirements.txt 里的 torch 三行摘掉（${path.basename(reqNoTorch)}），`)
+    console.log(`      并用 constraints（${path.basename(pinPath)}）钉死 ROCm 版 —— 否则会被换成 CUDA 版 ✗`)
+    if (!run('pip install -r requirements-no-torch.txt -c torch-pin.txt',
+      pyExe, ['-m', 'pip', 'install', '-c', pinPath, '-r', reqNoTorch])) return null
+  }
+
+  console.log('\n  ✓ A 卡这套装完了')
+  console.log(`    以后启动：${pyExe} ${path.join(comfyDir, 'main.py')} --disable-dynamic-vram --use-pytorch-cross-attention`)
+  console.log('    ⚠ 启动参数别省：--disable-dynamic-vram 在 A 卡上是必须的（DynamicVRAM 有已知问题）')
+  console.log('    ⚠ 出第一张图后**务必人工看一眼**是不是正常图（A 卡会静默出错）')
+  return { dir: comfyDir }
+}
+
 /* ------------------------------------------------------------------ 主流程 ---- */
 
 console.log('dsh-qwen-paint · 一键部署')
 console.log('='.repeat(64))
 
+/* ⓪ 显卡检测 —— 决定走哪条路（0.1.1 新增） */
+console.log('\n⓪ 看显卡 …')
+const gpu = FORCE_AMD
+  ? { names: ['（--force-amd：强制模拟 AMD 显卡）'], vendor: 'amd' }
+  : detectGpu()
+if (gpu.names.length === 0) {
+  console.log('  · 查不到显卡信息（不影响：也可以用 --comfy <目录> 手动指定）')
+} else {
+  for (const name of gpu.names) console.log(`  · ${name}`)
+}
+const VENDOR_LABEL = {
+  nvidia: 'NVIDIA → 走 ComfyUI 官方便携包（CUDA）',
+  amd: 'AMD → 走 ROCm 路线（下面单独说明）',
+  intel: 'Intel 核显 → 基本跑不动，建议换台机器；或加 --force-amd 看 A 卡那条路的说明',
+  unknown: '认不出厂商 → 按 NVIDIA 那条路试（最通用）',
+}
+console.log(`  判定：${VENDOR_LABEL[gpu.vendor]}`)
+
 /* ① ComfyUI */
-console.log('\n① 找 ComfyUI …')
-const found = findComfyDir()
-let comfyDir = found.dir
-if (comfyDir !== null) {
+let comfyDir = null
+if (gpu.vendor === 'amd') {
+  // A 卡：先试 ROCm 路线；没走通（或用户取消 / --check）就退回"本机已有的 ComfyUI"
+  const amdRoot = valueOf('--comfy') ?? path.join(os.homedir(), 'ComfyUI-rocm')
+  const amdResult = await amdSetup(amdRoot, gfxOf(gpu.names), CHECK_ONLY)
+  if (amdResult !== null) {
+    comfyDir = amdResult.dir
+  } else {
+    const fallback = findComfyDir()
+    if (fallback.dir !== null) {
+      comfyDir = fallback.dir
+      console.log(`\n  · 退回用本机已有的 ComfyUI：${comfyDir}`)
+      console.log('    ⚠ 但如果它是 NVIDIA 便携包，A 卡是跑不动的 —— 出图会直接失败。')
+    }
+  }
+}
+if (comfyDir === null && gpu.vendor !== 'amd') {
+  // ↓↓↓ 这一段是 NVIDIA 那条路，与 0.1.0 完全一致，一个字没动 ↓↓↓
+  console.log('\n① 找 ComfyUI …')
+  const found = findComfyDir()
+  comfyDir = found.dir
+  if (comfyDir !== null) {
   console.log(`  ✓ ${comfyDir}（${found.from}）`)
 } else {
   console.log('  ✗ 没找到已装的 ComfyUI')
@@ -251,6 +523,11 @@ if (comfyDir !== null) {
   const inner = path.join(target, 'ComfyUI_windows_portable')
   comfyDir = looksLikeComfy(inner) ? inner : target
   console.log(`  ✓ 解压完成：${comfyDir}`)
+  }
+} // ← 关掉"NVIDIA 那条路"的外层 if（0.1.1 新增的那层）
+if (comfyDir === null) {
+  console.log('\n  ✗ 没有可用的 ComfyUI。按上面的提示处理完，再重跑本脚本。')
+  process.exit(1)
 }
 
 /* ② 三个模型 */

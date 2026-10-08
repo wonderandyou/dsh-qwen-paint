@@ -57,6 +57,72 @@ node scripts/setup.mjs --download-comfy       顺带下载 ComfyUI 官方便携�
 
 跑完**彻底退出 DSH 再重新打开**即可。
 
+### 显卡：N 卡和 A 卡走两条路（0.1.1 新增）
+
+脚本会**先看显卡**再决定怎么装：
+
+| 显卡 | 走哪条路 |
+|---|---|
+| **NVIDIA** | ComfyUI **官方便携包**（CUDA），开箱即用 |
+| **AMD Radeon** | **ROCm** 路线（见下）—— 装完**还是 ComfyUI**，插件本身不用换 |
+| Intel 核显 | 基本跑不动，建议换台机器 |
+
+⚠ 机器上同时有独显和 AMD 核显时，**有 N 卡就按 N 卡走**（那条路最成熟）。
+
+#### AMD Radeon 用户（重点看这一段）
+
+先看计划（**只打印，不装任何东西**）：
+
+```
+node scripts/setup.mjs --check
+```
+
+确认要装再执行（会下载约 3 GB）：
+
+```
+node scripts/setup.mjs --yes
+```
+
+装的是 **AMD 官方软件仓库** `repo.radeon.com` 上的 ROCm 版 PyTorch，
+外加 ComfyUI **官方 GitHub 源码**；模型和 N 卡**完全同一套**
+（Comfy-Org 官方那三个文件，哈希一模一样）—— 换显卡不用换模型。
+
+**⚠⚠ 装完必须知道的三件事：**
+
+1. **可能静默出错** —— 在 gfx1100 这类卡上，它跑得飞快、日志也不报错，
+   出来的却可能是**噪点 / 全黑 / 颜色错**。**出第一张图后一定要人眼看一眼**，
+   不能只看"跑完了"。这是 A 卡最坑的地方。
+2. **别升到 ROCm 10.0 那套 wheels** —— 它报 HIP 7.15，实测会破坏权重。
+   脚本锁死在 **7.2.1**。
+3. 模型是 **Qwen Research License**：**仅限研究 / 评估，禁止商用**。
+
+启动参数别省（脚本会提示）：
+
+```
+python main.py --disable-dynamic-vram --use-pytorch-cross-attention
+```
+
+`--disable-dynamic-vram` 在 A 卡上是**必须的** —— DynamicVRAM 在那上面有已知问题。
+
+**前提**：AMD 的 Windows wheels **只支持 Python 3.12**（3.13 装不上）。
+没有的话脚本会告诉你装：
+
+```
+winget install --id=Python.Python.3.12 -e
+```
+
+（装运行时属于动系统，脚本**不替你装**，只提示。）
+
+#### 另一条路：ncnn + Vulkan（本插件用不了，但值得知道）
+
+如果 ROCm 那条在你的卡上跑不出正常图，还有一条完全不同思路的路：
+[nihui/qwenimage-ncnn-vulkan](https://github.com/nihui/qwenimage-ncnn-vulkan) ——
+**纯 Vulkan，不需要 ROCm / CUDA / PyTorch / Python**，单文件便携 exe，
+**2 GB 显存就能跑**，NVIDIA / AMD / Intel / Apple 全通吃，速度还比 ROCm 快。
+
+⚠ 但它**不是 ComfyUI**，所以**本插件用不了**（插件是通过 ComfyUI 的 HTTP API 出图的）。
+它是留给"实在跑不起来、愿意单独再装一套"的人的后路。
+
 ### 下载渠道（只走有正规资质的渠道）
 
 | 东西 | 来源 | 哈希怎么核 |

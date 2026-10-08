@@ -52,6 +52,18 @@ ComfyUI 本体在 GitHub 官方 release，**官方不公布哈希**，所以脚�
 
 断点续传：中途断了**直接重跑**，`curl -C -` 会接着下。
 
+### 显卡：N 卡开箱即用，A 卡走 ROCm（0.1.1 新增）
+
+脚本**先看显卡再决定怎么装**：N 卡用 ComfyUI 官方便携包；**AMD Radeon 走 ROCm 路线**
+（AMD 官方 Windows wheels，装完还是 ComfyUI，**插件本身不用换**，模型也是同一套）；
+Intel 核显基本跑不动。
+
+AMD 用户先 `node scripts/setup.mjs --check` 看计划，确认后 `--yes` 执行。
+⚠ 三条必读：**A 卡可能静默出错**（跑完必须人眼看图）、**别升 ROCm 10.0**
+（HIP 7.15 会破坏权重，脚本锁 7.2.1）、模型**禁止商用**。
+
+完整说明见 [INSTALL.md](INSTALL.md) 的「AMD Radeon 用户」一节。
+
 ### 只装插件本体
 
 ```powershell

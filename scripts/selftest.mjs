@@ -900,6 +900,38 @@ check(
   JSON.stringify(setAurora).slice(0, 200),
 )
 
+section('⑱ A 卡（AMD）支持 —— 0.1.1 新增，本机是 N 卡无法实测，用源码特征钉住关键点')
+
+const setupCode = await fsp.readFile(path.join(ROOT, 'scripts', 'setup.mjs'), 'utf8')
+check('setup.mjs 里有显卡检测', setupCode.includes('function detectGpu()'))
+check(
+  '★ 判定顺序是「有 N 卡就走 N 卡」（多显卡机器上别被 AMD 核显带偏 —— 本机实测就报了三张卡）',
+  setupCode.indexOf("vendor = 'nvidia'") < setupCode.indexOf("vendor = 'amd'"),
+)
+check('有 gfx 型号映射表', setupCode.includes('GFX_TABLE') && setupCode.includes('function gfxOf'))
+check('★ A 卡的下载源只有 AMD 官方仓库', setupCode.includes('repo.radeon.com/rocm/windows'))
+check(
+  '★ 没有引入任何被拉黑的第三方加速站',
+  !/gh-proxy|ghfast|ghproxy|hf-mirror/iu.test(setupCode),
+)
+check(
+  '★ 锁死在 ROCm 7.2.1（ROCm 10.0 报 HIP 7.15，实测会破坏权重）',
+  setupCode.includes('rocm-rel-7.2.1') && !setupCode.includes('rocm-rel-10'),
+)
+check('★ 有"A 卡可能静默出错"的提示', setupCode.includes('静默出错'))
+check('★ 有"禁止商用"的许可证提示', setupCode.includes('禁止商用'))
+check(
+  '★ 用 constraints 锁住 torch（否则 ComfyUI 的 requirements 会把它换成 CUDA 版）',
+  setupCode.includes('torch-pin.txt') && setupCode.includes('requirements-no-torch.txt'),
+)
+check(
+  '★ --check 时必须走"只打印"的分支、不执行安装',
+  /if \(checkOnly\) \{[\s\S]{0,200}?return null/u.test(setupCode),
+)
+check('有 --force-amd（在 N 卡机器上验证 A 卡分支用）', setupCode.includes('--force-amd'))
+check('有 --yes（无人值守的一键安装用）', setupCode.includes('--yes'))
+check('启动参数提醒里有 --disable-dynamic-vram（A 卡上必须）', setupCode.includes('--disable-dynamic-vram'))
+
 /* ------------------------------------------------------------------ 收尾 ---- */
 
 server.close()
