@@ -952,6 +952,79 @@ check('有 --force-amd（在 N 卡机器上验证 A 卡分支用）', setupCode.
 check('有 --yes（无人值守的一键安装用）', setupCode.includes('--yes'))
 check('启动参数提醒里有 --disable-dynamic-vram（A 卡上必须）', setupCode.includes('--disable-dynamic-vram'))
 
+section('⑲ 图生图（draw_image 的 reference 参数）—— 主人 2026-10-08 要求')
+
+/* 背景：图生图原本是 scripts/_img2img.mjs 一个**命令行脚本**，不走插件工具，
+   所以聊天里**没有出图动画** ✗。现在把它并进 draw_image（给 reference 就走图生图），
+   这样卡片 / 动画 / 状态点全部自动复用 —— 客户端一行都不用改 ✓ */
+
+const wfText = buildWorkflow(DEFAULTS, { prompt: 'x', width: 832, height: 1216, steps: 25, seed: 1 })
+check('文生图：有 EmptyLatentImage', wfText[6]?.class_type === 'EmptyLatentImage')
+check('文生图：没有 LoadImage', wfText[4] === undefined)
+check('文生图：latent 来自空 latent（节点 6）', wfText[8]?.inputs?.latent_image?.[0] === '6')
+check('文生图：TextEncode 不接 vae（与改动前一致）', wfText[5]?.inputs?.vae === undefined)
+check('文生图：resolution 仍是配置里的固定值', wfText[5]?.inputs?.resolution === DEFAULTS.resolution)
+
+const wfRef = buildWorkflow(DEFAULTS, {
+  prompt: 'x', width: 832, height: 1216, steps: 25, seed: 1, reference: 'ref.png',
+})
+check(
+  '★ 图生图：加了 LoadImage 节点，且指向参考图',
+  wfRef[4]?.class_type === 'LoadImage' && wfRef[4]?.inputs?.image === 'ref.png',
+)
+check('★ 图生图：**删掉了 EmptyLatentImage**（务必不能留）', wfRef[6] === undefined)
+check(
+  '★ 图生图：latent 取自编码节点的第 2 号输出（positive=0/negative=1/latent=2）',
+  wfRef[8]?.inputs?.latent_image?.[0] === '5' && wfRef[8]?.inputs?.latent_image?.[1] === 2,
+)
+check(
+  '★ 图生图：TextEncode **拿到了 vae** —— 不给 vae 它就不会编码参考图',
+  wfRef[5]?.inputs?.vae?.[0] === '3',
+)
+check('★ 图生图：参考图走 images.image_1', wfRef[5]?.inputs?.['images.image_1']?.[0] === '4')
+check(
+  '★ 图生图的 resolution 用 sqrt(W*H)（它直接决定输出尺寸）',
+  wfRef[5]?.inputs?.resolution === Math.round(Math.sqrt(832 * 1216)),
+  wfRef[5]?.inputs?.resolution,
+)
+check(
+  '★ 工具参数里有 reference —— 否则 DSH 根本传不进来，也就无从触发',
+  tool?.parameters?.properties?.reference?.type === 'string',
+)
+check(
+  '★ 参考图走 /upload/image（不自己往 input 目录里复制 —— 那目录未必是配置里那个）',
+  (() => {
+    const code = readFileSync(path.join(ROOT, 'lib', 'index.js'), 'utf8')
+    return code.includes('/upload/image') && !/copyFile[^\n]*input/iu.test(code)
+  })(),
+)
+
+section('⑳ 取图编号撞车的事故防线（主人 2026-10-08 那张柴犬图）')
+
+/* 事故经过：ComfyUI 的 output 被 --output-directory 改到了别处，而两个实例的
+   SaveImage 编号**都从 00001 开始** → 旧目录里恰好有同名的旧文件
+   → 老代码"先读本地"读到了 → 把昨天的图当成这次的成果，还按新 prompt 命名、
+     报新请求的尺寸。**修法两条，这里各钉一条。** */
+const hostCode = readFileSync(path.join(ROOT, 'lib', 'index.js'), 'utf8')
+check(
+  '★ 取图顺序：先走 ComfyUI 官方的 /view，本地目录只当兜底',
+  (() => {
+    const fn = hostCode.slice(hostCode.indexOf('async function fetchImageBytes'))
+    const viewAt = fn.indexOf('/view?')
+    const localAt = fn.indexOf('comfyOutputDir')
+    return viewAt > 0 && localAt > viewAt // /view 必须排在本地读取之前
+  })(),
+)
+check('★ 有 PNG 尺寸读取函数', hostCode.includes('function readPngSize'))
+check(
+  '★ 落盘前会校验尺寸，不符就报错（不再静默产出错图）',
+  /readPngSize\(bytes\)[\s\S]{0,300}?throw new Error/u.test(hostCode),
+)
+check(
+  '★ 尺寸校验只对文生图做（图生图输出尺寸由 sqrt(W*H) 决定，校验会误报）',
+  /\breference === ''\s*\)?\s*\{[\s\S]{0,300}?readPngSize/u.test(hostCode),
+)
+
 /* ------------------------------------------------------------------ 收尾 ---- */
 
 server.close()
