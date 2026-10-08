@@ -1,0 +1,20 @@
+# 依赖与构建产物 —— 仓库里不需要
+node_modules/
+dist/
+
+# 本机工作残留（打包脚本、备份、日志、压缩包）
+_backup*/
+*.log
+*.tmp
+*.zip
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+Thumbs.db
+Desktop.ini
+*.swp
+
+# Python 缓存（scripts/make_loading_gif.py 跑出来的）
+__pycache__/
+*.pyc

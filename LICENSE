@@ -1,0 +1,49 @@
+MIT License
+
+Copyright (c) 2026 @奇迹与你
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+---
+
+# 中文说明
+
+**作者：@奇迹与你**
+
+本项目（DSH 插件 **`(绘图)千问`** —— 在对话里调用本机 ComfyUI，用千问 Qwen-Image 2.1 出图）
+以 MIT 许可证发布：你可以自由使用、修改、再分发（包括商用），
+**只需保留上面的版权声明与许可声明**。
+
+## 它包含什么
+
+- 工具 `draw_image`：说一句「画一只猫」就出图，图片**直接显示在聊天框**里
+- 出图期间的动画块（9:16 手机壁纸比例）：**流星（自制）** + **15 种流光**，界面里可自选
+- 输入框右下角的**后端状态点**，点开是设置菜单（自动关闭时长 / 生图动画），选择会自动记住
+- 后端**空闲自动关停**（默认 5 分钟，释放显存），下次出图时**自动隐藏启动**
+- **一键部署脚本**：自动找/装 ComfyUI、下载模型（带 SHA256 校验）、挂进 DSH profile
+
+## 说明
+
+- 插件**只走本机 `127.0.0.1`**，**不出网、不花钱、不需要任何 API Key**。
+- 本仓库**不包含任何个人凭据、模型权重文件、或绝对用户路径**。
+- 那 15 种流光的配色**抄自月匠**（原样照搬，一个色标没改），仅作致敬与复用，
+  相关权利归原作者；若原作者有异议，联系即删。
+- 模型权重来自 **Comfy Org 官方在 ModelScope 的仓库**，本仓库只记录其**官方 SHA256**，
+  不转存、不镜像。
+

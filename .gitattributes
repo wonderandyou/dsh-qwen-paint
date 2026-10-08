@@ -1,0 +1,12 @@
+# 统一按 LF 存仓库 —— 避免 Windows 上提交、别人 clone 时被换成 CRLF
+* text=auto eol=lf
+
+# 二进制资源，别做任何换行转换
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.gif binary
+*.ico binary
+*.zip binary
+*.safetensors binary

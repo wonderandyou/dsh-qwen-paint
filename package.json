@@ -1,0 +1,47 @@
+{
+  "name": "dsh-qwen-paint",
+  "version": "0.1.0",
+  "description": "【(绘图)千问 · @奇迹与你】让 DeepSeek Harness 在对话里直接调用本机 ComfyUI（千问 Qwen-Image 模型）画图：说一句「画一只猫」就出图，图片落盘到千问1生图目录并在聊天框里直接显示。只走本机 127.0.0.1，不出网、不花钱、不需要任何 API Key。",
+  "meta": {
+    "title": "(绘图)千问",
+    "description": "对话里直接调本机 ComfyUI 用千问模型画图，出图后当场显示在聊天框。纯本地，不出网，不用 Key。"
+  },
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": {
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "default": "./lib/client.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "slots"
+      ],
+      "platform": "web",
+      "immediately": true
+    }
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "comfyui",
+    "qwen-image",
+    "image-generation"
+  ],
+  "author": "@奇迹与你",
+    "license": "MIT"
+}

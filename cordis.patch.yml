@@ -1,0 +1,20 @@
+# dsh-qwen-paint —— bundle 自己的补丁层
+#
+# 这个文件只负责把插件本体的 host 行插进来；它**不碰** profile 的
+# package.json，也不碰模型路由。安装走官方 plugin_manager 的 install_bundle。
+#
+# 可调项（都在这里改，升级插件不会覆盖这一层）：
+#   comfyUrl      ComfyUI 服务地址（默认本机 8188）
+#   outputDir     出图落盘目录（默认桌面「千问1生图」，遵循工作区约定）
+#   workflowFile  自定义 workflow JSON 的路径；留空则用内置的千问文生图模板
+- insert:
+    - id: qwen-paint
+      name: 'dsh-qwen-paint'
+      config:
+        comfyUrl: 'http://127.0.0.1:8188'
+        # ★ outputDir 故意**不写死**：插件默认会按当前用户的桌面推算（USERPROFILE/Desktop/千问1生图）。
+        #   写死绝对路径有两个害处：① 别人装上后往**不存在的目录**写，出图会失败；
+        #   ② 包里带着打包者的 Windows 用户名。
+        #   要固定在别处，放开下面这行并改成你的路径：
+        # outputDir: 'D:\我的图'
+        timeoutMs: 600000
