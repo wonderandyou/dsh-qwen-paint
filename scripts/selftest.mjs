@@ -1025,6 +1025,28 @@ check(
   /\breference === ''\s*\)?\s*\{[\s\S]{0,300}?readPngSize/u.test(hostCode),
 )
 
+section('㉑ 生图意图优先级 + 每次只生一张（主人 2026-10-08）')
+
+/* 主人的要求：「把生图目的识别的优先级提到最高，一旦检测到就立刻隐藏思考切动画，切每次只生一张图」。
+   ⚠ 有个绕不开的事实：客户端插件**看不到用户消息**，它能感知的最早事件就是"工具开始跑"，
+   所以动画起点的早晚完全取决于**模型多快调用 draw_image** —— 提示词越狠，动画来得越早。 */
+const hostSrc = readFileSync(path.join(ROOT, 'lib', 'index.js'), 'utf8')
+check('★ systemPrompt 里点明这是【最高优先级】的判断', hostSrc.includes('【最高优先级】'))
+check(
+  '★ 要求「第一个动作就是调用 draw_image」（不给思考留时间）',
+  hostSrc.includes('你的第一个动作就是调用 draw_image'),
+)
+check('★ 要求「一次只生一张图」', hostSrc.includes('一次只生一张图'))
+check(
+  '★ 代码层面也保证只落一张（不能只靠提示词这个"期望"）',
+  hostSrc.includes('images.slice(0, 1)'),
+)
+check(
+  '★ 注释里写明了「为什么立刻调工具 = 立刻切动画」（免得以后有人以为客户端能更早感知）',
+  hostSrc.includes('看不到用户消息'),
+)
+check('★ 图生图也被点名进生图意图（用这张图做参考画…）', hostSrc.includes('用这张图做参考画'))
+
 /* ------------------------------------------------------------------ 收尾 ---- */
 
 server.close()
