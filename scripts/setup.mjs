@@ -121,22 +121,33 @@ const ASSUME_YES = has('--yes')
 
 /**
  * 显卡型号 → ROCm 的 gfx 代号。
- * 只用于**猜**，猜不出就让用户照 ROCm 官方支持列表自己挑 —— 猜错比猜不出更糟，
- * 所以这里只收常见型号，宁缺勿滥。
+ *
+ * ⚠⚠ 本表**照 AMD 官方的 Windows 支持列表逐条核对过**，第 3 列就是官方的态度：
+ *   https://rocm.docs.amd.com/projects/install-on-windows/en/latest/reference/system-requirements.html
+ *
+ *   · 'ok' = 官方明确支持（Runtime ✅ / HIP SDK ✅）
+ *   · 'no' = 官方**明确不支持**（❌）→ 列出来是为了**拦住用户**，不是引导他安装
+ *
+ * ⚠ 之前的版本是照某个网友项目的 README 抄的，里面把 RX 6000 全系、RX 5500 这些
+ *   **官方明确不支持**的老卡也列成了可用 —— 照着装只会白下 3 GB 然后跑不起来 ✗
+ *   （教训：**数据也得核官方**，不能因为"看着像客观事实"就照抄二手来源。）
+ *
+ * ⚠ 只用于**猜**：猜不出就让用户照上面的官方列表自己挑 —— 猜错比猜不出更糟。
  */
 const GFX_TABLE = [
-  [/RX\s*9070|AI\s*PRO\s*R9700|R9600D/iu, 'gfx1201'],
-  [/RX\s*9060/iu, 'gfx1200'],
-  [/Ryzen\s*AI\s*9\s*HX\s*375/iu, 'gfx1150'],
-  [/RX\s*79[05]0|PRO\s*W79[05]0|W7800/iu, 'gfx1100'],
-  [/RX\s*78[05]0|RX\s*77[05]0|PRO\s*V710|W7700/iu, 'gfx1101'],
-  [/RX\s*7600/iu, 'gfx1102'],
-  [/Radeon\s*780M/iu, 'gfx1103'],
-  [/RX\s*69[05]0|RX\s*6800|PRO\s*W6800|V620/iu, 'gfx1030'],
-  [/RX\s*67[05]0/iu, 'gfx1031'],
-  [/RX\s*6600|PRO\s*W6600/iu, 'gfx1032'],
-  [/RX\s*5700/iu, 'gfx1010'],
-  [/RX\s*5500|PRO\s*W5500/iu, 'gfx1012'],
+  // ── 官方支持 ──
+  [/RX\s*9070|AI\s*PRO\s*R9700|R9600D/iu, 'gfx1201', 'ok'],
+  [/RX\s*9060/iu, 'gfx1200', 'ok'],
+  [/Ryzen\s*AI\s*Max/iu, 'gfx1151', 'ok'], // ← 之前漏了这张，而 AMD 官方博客实测用的正是它
+  [/Ryzen\s*AI\s*(9\s*)?[34]00/iu, 'gfx1150', 'ok'],
+  [/RX\s*79[05]0|PRO\s*W79[05]0|W7800/iu, 'gfx1100', 'ok'],
+  [/RX\s*78[05]0|RX\s*77[05]0|PRO\s*V710|W7700/iu, 'gfx1101', 'ok'],
+  [/RX\s*76[05]0/iu, 'gfx1102', 'ok'],
+  // ── 官方明确不支持（老卡）──
+  [/RX\s*69[05]0|RX\s*68[05]0|PRO\s*W6800|V620/iu, 'gfx1030', 'no'],
+  [/RX\s*67[05]0/iu, 'gfx1031', 'no'],
+  [/RX\s*66[05]0|PRO\s*W6600/iu, 'gfx1032', 'no'],
+  [/RX\s*5500|PRO\s*W5500/iu, 'gfx1012', 'no'],
 ]
 
 /**
@@ -163,11 +174,14 @@ function detectGpu() {
   return { names, vendor }
 }
 
-/** 从显卡名猜 gfx 代号；猜不出返回 null。 */
+/**
+ * 从显卡名猜 gfx 代号。
+ * @returns {{code: string, support: 'ok'|'no'}|null} 猜不出返回 null
+ */
 function gfxOf(names) {
   for (const name of names) {
-    for (const [re, gfx] of GFX_TABLE) {
-      if (re.test(name)) return gfx
+    for (const [re, code, support] of GFX_TABLE) {
+      if (re.test(name)) return { code, support }
     }
   }
   return null
@@ -305,6 +319,17 @@ async function amdSetup(targetRoot, gfx, checkOnly) {
   console.log(`        本脚本锁死在 ${ROCM_TORCH}（HIP 7.2）。`)
   console.log('     3. 模型是 **Qwen Research License**：仅限研究 / 评估，**禁止商用**。')
 
+  // ★★ 官方明确不支持的卡：**当场拦住** —— 别让用户白下 3 GB 才发现跑不起来
+  if (gfx !== null && gfx.support === 'no') {
+    console.log(`\n  ✗ 停手：你这张卡（${gfx.code}）**AMD 官方明确不支持** Windows 上的 ROCm。`)
+    console.log('    AMD 官方列表里它标的是 ❌（Runtime ❌、HIP SDK ❌），硬装大概率跑不起来。')
+    console.log('    可选的路：')
+    console.log('      · 换一张官方支持的卡（RX 7000 / 9000 系，或 Ryzen AI Max 系列）')
+    console.log('      · 或去试 ncnn + Vulkan（纯 Vulkan、完全不需要 ROCm）：')
+    console.log('        https://github.com/nihui/qwenimage-ncnn-vulkan')
+    return null
+  }
+
   // ── Python 3.12（AMD 的 Windows wheels 只有 cp312，3.13 装不上）──
   const py = spawnSync('py', ['-3.12', '--version'], { encoding: 'utf8' })
   const pyOk = py.status === 0
@@ -316,8 +341,12 @@ async function amdSetup(targetRoot, gfx, checkOnly) {
     console.log('      请先装：winget install --id=Python.Python.3.12 -e')
     console.log('      （装完重跑本脚本。这一步脚本**不替你做** —— 装运行时要动系统，交给你决定）')
   }
-  console.log(`    gfx 代号  ：${gfx ?? '⚠ 认不出来，请照 ROCm 官方支持列表自己挑一个'}`)
-  console.log(`      列表：https://rocm.docs.amd.com/projects/install-on-linux/en/latest/reference/gpu-specs.html`)
+  if (gfx === null) {
+    console.log('    gfx 代号  ：⚠ 认不出来 —— 请照 AMD 官方支持列表自己挑一个：')
+    console.log('      https://rocm.docs.amd.com/projects/install-on-windows/en/latest/reference/system-requirements.html')
+  } else {
+    console.log(`    gfx 代号  ：${gfx.code}（AMD 官方${gfx.support === 'ok' ? '**支持**' : '**明确不支持**'}）`)
+  }
   console.log(`    安装目录  ：${targetRoot}`)
   console.log(`    下载源    ：${ROCM_WHEELS}`)
   console.log('                （AMD 官方软件仓库；ComfyUI 用官方 GitHub，模型用 Comfy-Org 官方仓库）')

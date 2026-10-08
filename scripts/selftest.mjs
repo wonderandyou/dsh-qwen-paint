@@ -909,6 +909,26 @@ check(
   setupCode.indexOf("vendor = 'nvidia'") < setupCode.indexOf("vendor = 'amd'"),
 )
 check('有 gfx 型号映射表', setupCode.includes('GFX_TABLE') && setupCode.includes('function gfxOf'))
+check(
+  '★ gfx 表带"官方支持与否"这一列（照 AMD 官方 Windows 列表核过，不是照网友项目抄的）',
+  setupCode.includes("'gfx1201', 'ok'") && setupCode.includes("'gfx1030', 'no'"),
+)
+check(
+  '★ 官方不支持的老卡会被当场拦住（别让用户白下 3 GB 再发现跑不起来）',
+  /support === 'no'[\s\S]{0,500}?return null/u.test(setupCode),
+)
+check(
+  '★ 补上了官方支持、但之前从二手来源抄漏的 gfx1151（Ryzen AI Max 系列）',
+  setupCode.includes("'gfx1151'"),
+)
+check(
+  '★ 表里不再有官方 Windows 列表里根本没有的 gfx1010 / gfx1103',
+  !setupCode.includes("'gfx1010'") && !setupCode.includes("'gfx1103'"),
+)
+check(
+  '★ 核对链接指向 AMD 官方 **Windows** 文档（不是 Linux 那份）',
+  setupCode.includes('install-on-windows'),
+)
 check('★ A 卡的下载源只有 AMD 官方仓库', setupCode.includes('repo.radeon.com/rocm/windows'))
 check(
   '★ 没有引入任何被拉黑的第三方加速站',
