@@ -35,8 +35,16 @@ const WANT_SRC = process.argv.includes('--src')
 const ZIP_NAME = `${PKG.meta?.title ?? PKG.name}-${PKG.version}${WANT_SRC ? '-src' : ''}.zip`
 const ZIP = path.join(DIST, ZIP_NAME)
 
-/** 顶层必须进包的文件（少一个就报错，防止"少打包了文档"这种低级事故）。 */
-const ROOT_FILES = ['package.json', 'cordis.patch.yml', 'LICENSE', 'README.md', 'INSTALL.md']
+/**
+ * 顶层必须进包的文件（少一个就报错，防止"少打包了文档"这种低级事故）。
+ *
+ * ⚠⚠ 这是**白名单** —— 新加根目录文件必须往这里补一行，否则**不会被收进包** ✗
+ *   （刚踩到苗头：`一键安装.cmd` 和 `给DSH安装的话.md` 加完之后差点漏掉）
+ */
+const ROOT_FILES = [
+  'package.json', 'cordis.patch.yml', 'LICENSE', 'README.md', 'INSTALL.md',
+  '一键安装.cmd', '给DSH安装的话.md',
+]
 /** 必须进包的目录。 */
 const DIRS = ['lib', 'assets', 'scripts']
 /** 收集时一律跳过的东西。 */

@@ -19,7 +19,7 @@
 import http from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
-import { promises as fsp, readFileSync } from 'node:fs'
+import { promises as fsp, existsSync, readFileSync } from 'node:fs'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -1103,6 +1103,44 @@ check(
   setupSrc2.includes("has('--amd')") && setupSrc2.includes("has('--nvidia')"),
 )
 check('★ 查不到时提示怎么自查显卡（dxdiag）', setupSrc2.includes('dxdiag'))
+
+section('㉓ 一键安装入口与版本自证（主人 2026-10-08 要求）')
+
+/* 起因：主人把新包发给朋友，朋友解压到**已存在的目录**，解压工具跳过了同名文件，
+   于是他读的、跑的**还是旧 setup.mjs**，却以为用的是新包（症状：说 `--amd` 不是合法参数）。
+   → 两样东西补上：双击就能装的 `一键安装.cmd`，和一个**会自报指纹**的 quickstart ✓ */
+const quickstartPath = path.join(ROOT, 'scripts', 'quickstart.mjs')
+const cmdPath = path.join(ROOT, '一键安装.cmd')
+const talkPath = path.join(ROOT, '给DSH安装的话.md')
+check('有 quickstart.mjs（一键安装的实现）', existsSync(quickstartPath))
+check('有 一键安装.cmd（双击入口）', existsSync(cmdPath))
+check('有 给DSH安装的话.md（可直接复制给 DSH 的话术）', existsSync(talkPath))
+
+const quickstartSrc = readFileSync(quickstartPath, 'utf8')
+check(
+  '★★ 一键脚本必须**自报版本 + setup.mjs 指纹** —— 这是「装错版本」的唯一防线',
+  quickstartSrc.includes('fingerprint') && /slice\(0,\s*12\)/u.test(quickstartSrc),
+)
+check(
+  '★ 它必须先检测、再问一句，才真装（不能一上来就下载）',
+  quickstartSrc.indexOf("'--check'") < quickstartSrc.indexOf("'--yes'"),
+)
+check(
+  '★ 它不替用户装 Python（动系统的事只提示，不代劳）',
+  quickstartSrc.includes('winget install --id=Python.Python.3.12'),
+)
+
+check(
+  '★★ `一键安装.cmd` 必须**纯 ASCII** —— .cmd 按 ANSI 读，里面写中文会变乱码',
+  readFileSync(cmdPath).every((byte) => byte < 0x80),
+)
+check(
+  '★ pack.mjs 的根文件白名单必须收进这两个新文件（否则它们进不了包）',
+  (() => {
+    const packSrc = readFileSync(path.join(ROOT, 'scripts', 'pack.mjs'), 'utf8')
+    return packSrc.includes('一键安装.cmd') && packSrc.includes('给DSH安装的话.md')
+  })(),
+)
 
 /* ------------------------------------------------------------------ 收尾 ---- */
 
